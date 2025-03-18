@@ -9,12 +9,13 @@ from django.utils import timezone
 
 from netbox_branching.choices import BranchStatusChoices
 from netbox_branching.constants import MAIN_SCHEMA
-from netbox_branching.models import Branch, ChangeDiff,ObjectChange
-from netbox_branching.utilities import get_tables_to_replicate, activate_branch
+from netbox_branching.models import Branch, ObjectChange
+from netbox_branching.utilities import get_tables_to_replicate
+from netbox_branching.signal_receivers import record_change_diff
 from .utils import fetchall, fetchone
 from dcim.models import Site, Device, DeviceRole, Manufacturer, DeviceType
-from utilities.serialization import serialize_object
 from core.choices import ObjectChangeActionChoices
+
 
 class BranchTestCase(TransactionTestCase):
     serialized_rollback = True
@@ -165,7 +166,7 @@ class BranchTestCase(TransactionTestCase):
         }
     })
     def test_branch_timeout(self):
-        
+
         user = get_user_model().objects.create_user(username='testuser', is_superuser=True)
         site_a, _ = Site.objects.get_or_create(name="Site A",
                                                slug="site_a",
@@ -225,11 +226,11 @@ class BranchTestCase(TransactionTestCase):
             branch.full_clean()
             branch.save(provision=False)
             branch.refresh_from_db()
-            branch.provision(user=None)                
+            branch.provision(user=None)
             site = Site.objects.create(name="Site Create",
                                        slug="site_create",
                                        description="site_create_description")
-            ObjectChange.objects.using(branch.connection_name).create(
+            oc = ObjectChange.objects.using(branch.connection_name).create(
                 user=user,
                 user_name=user.username,
                 request_id="dbe36856-f278-48b0-82a6-1eeef652e2b6",
@@ -237,8 +238,8 @@ class BranchTestCase(TransactionTestCase):
                 changed_object=site,
                 object_repr=str(site),
                 postchange_data={'name': site.name, 'slug': site.slug}
-            ),
-
+            )
+            record_change_diff(oc)
             # with activate_branch(branch):
             #     device_create, _ = Device.objects.using(branch.connection_name).get_or_create(name="Device Create",
             #                                                     site=site_a,
@@ -246,6 +247,7 @@ class BranchTestCase(TransactionTestCase):
             #                                                     device_type=device_type)
             logger.critical(f"{branch.job_timeout = }")
             logger.critical(f"{branch.get_changes() = }")
+            logger.critical(f"{len(branch.get_changes()) = }")
 
             self.assertEqual(branch.job_timeout, 8)
 
