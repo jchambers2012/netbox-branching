@@ -227,10 +227,13 @@ class BranchTestCase(TransactionTestCase):
             branch.save(provision=False)
             branch.refresh_from_db()
             branch.provision(user=None)
-            site = Site.objects.create(name="Site Create",
+
+            # record_change_diff(oc)
+            with activate_branch(branch):
+                site = Site.objects.using(branch.connection_name).create(name="Site Create",
                                        slug="site_create",
                                        description="site_create_description")
-            oc = ObjectChange.objects.using(branch.connection_name).create(
+                oc = ObjectChange.objects.using(branch.connection_name).create(
                 user=user,
                 user_name=user.username,
                 request_id="dbe36856-f278-48b0-82a6-1eeef652e2b6",
@@ -239,8 +242,6 @@ class BranchTestCase(TransactionTestCase):
                 object_repr=str(site),
                 postchange_data={'name': site.name, 'slug': site.slug}
             )
-            # record_change_diff(oc)
-            with activate_branch(branch):
                 record_change_diff(oc)
             #     device_create, _ = Device.objects.using(branch.connection_name).get_or_create(name="Device Create",
             #                                                     site=site_a,
