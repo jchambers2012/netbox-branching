@@ -233,6 +233,7 @@ class BranchTestCase(TransactionTestCase):
                 site = Site.objects.using(branch.connection_name).create(name="Site Create",
                                        slug="site_create",
                                        description="site_create_description")
+                postchange_data = {'name': site.name, 'slug': site.slug}
                 oc = ObjectChange.objects.using(branch.connection_name).create(
                 user=user,
                 user_name=user.username,
@@ -240,13 +241,19 @@ class BranchTestCase(TransactionTestCase):
                 action=ObjectChangeActionChoices.ACTION_CREATE,
                 changed_object=site,
                 object_repr=str(site),
-                postchange_data={'name': site.name, 'slug': site.slug}
+                postchange_data=postchange_data,
             )
                 record_change_diff(oc)
             #     device_create, _ = Device.objects.using(branch.connection_name).get_or_create(name="Device Create",
             #                                                     site=site_a,
             #                                                     role=device_role,
             #                                                     device_type=device_type)
+                logger.critical(f"{branch.job_timeout = }")
+                logger.critical(f"{branch.get_changes() = }")
+                logger.critical(f"{len(branch.get_changes()) = }")
+                logger.critical(f"{oc = }")
+                logger.critical(f"{oc.__dict__ = }")
+                logger.critical(f"{branch.__dict__ = }")
             logger.critical(f"{branch.job_timeout = }")
             logger.critical(f"{branch.get_changes() = }")
             logger.critical(f"{len(branch.get_changes()) = }")
