@@ -2,17 +2,19 @@ import re
 from datetime import timedelta
 
 from django.core.exceptions import ValidationError
+from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 
 from netbox_branching.choices import BranchStatusChoices
 from netbox_branching.constants import MAIN_SCHEMA
-from netbox_branching.models import Branch, ChangeDiff
+from netbox_branching.models import Branch, ChangeDiff,ObjectChange
 from netbox_branching.utilities import get_tables_to_replicate, activate_branch
 from .utils import fetchall, fetchone
 from dcim.models import Site, Device, DeviceRole, Manufacturer, DeviceType
 from utilities.serialization import serialize_object
+from core.choices import ObjectChangeActionChoices
 
 class BranchTestCase(TransactionTestCase):
     serialized_rollback = True
@@ -163,6 +165,8 @@ class BranchTestCase(TransactionTestCase):
         }
     })
     def test_branch_timeout(self):
+        
+        user = get_user_model().objects.create_user(username='testuser', is_superuser=True)
         site_a, _ = Site.objects.get_or_create(name="Site A",
                                                slug="site_a",
                                                description="site_a_description")
@@ -222,19 +226,18 @@ class BranchTestCase(TransactionTestCase):
             branch.save(provision=False)
             branch.refresh_from_db()
             branch.provision(user=None)                
-            model = Device.changed_object_type.model_class()
-            obj = model.objects.using(branch.connection_name).get(pk=Device.changed_object_id)
-            current_data = serialize_object(obj, exclude=['created', 'last_updated'])
-            diff = ChangeDiff(
-                branch=branch,
-                object=Device.changed_object,
-                action=Device.action,
-                original=Device.prechange_data_clean or None,
-                modified=Device.postchange_data_clean or None,
-                current=current_data or None,
-                last_updated=timezone.now(),
-            )
-            diff.save()
+            site = Site.objects.create(name="Site Create",
+                                       slug="site_create",
+                                       description="site_create_description")
+            ObjectChange.objects.using(branch.connection_name).create(
+                user=user,
+                user_name=user.username,
+                request_id="dbe36856-f278-48b0-82a6-1eeef652e2b6",
+                action=ObjectChangeActionChoices.ACTION_CREATE,
+                changed_object=site,
+                object_repr=str(site),
+                postchange_data={'name': site.name, 'slug': site.slug}
+            ),
 
             # with activate_branch(branch):
             #     device_create, _ = Device.objects.using(branch.connection_name).get_or_create(name="Device Create",
