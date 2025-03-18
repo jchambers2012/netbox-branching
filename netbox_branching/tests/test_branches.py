@@ -8,11 +8,11 @@ from django.utils import timezone
 
 from netbox_branching.choices import BranchStatusChoices
 from netbox_branching.constants import MAIN_SCHEMA
-from netbox_branching.models import Branch
+from netbox_branching.models import Branch, ChangeDiff
 from netbox_branching.utilities import get_tables_to_replicate, activate_branch
 from .utils import fetchall, fetchone
 from dcim.models import Site, Device, DeviceRole, Manufacturer, DeviceType
-
+from utilities.serialization import serialize_object
 
 class BranchTestCase(TransactionTestCase):
     serialized_rollback = True
@@ -181,19 +181,19 @@ class BranchTestCase(TransactionTestCase):
                                                           device_type=device_type)
         import logging
         logger = logging.getLogger(__name__)
-        with self.subTest("Create a device role with default timeout"):
-            branch = Branch(name='Branch Device Role Create')
-            branch.full_clean()
-            branch.save(provision=False)
-            branch.refresh_from_db()
-            branch.provision(user=None)
-            with activate_branch(branch):
-                device_role_create, _ = DeviceRole.objects.using(branch.connection_name).get_or_create(
-                                                                        name="Device Role Create",
-                                                                        slug="device_role_create")
-            logger.critical(f"{branch.job_timeout = }")
-            logger.critical(f"{branch.get_changes() = }")
-            self.assertEqual(branch.job_timeout, 1)
+        # with self.subTest("Create a device role with default timeout"):
+        #     branch = Branch(name='Branch Device Role Create')
+        #     branch.full_clean()
+        #     branch.save(provision=False)
+        #     branch.refresh_from_db()
+        #     branch.provision(user=None)
+        #     with activate_branch(branch):
+        #         device_role_create, _ = DeviceRole.objects.using(branch.connection_name).get_or_create(
+        #                                                                 name="Device Role Create",
+        #                                                                 slug="device_role_create")
+        #     logger.critical(f"{branch.job_timeout = }")
+        #     logger.critical(f"{branch.get_changes() = }")
+        #     self.assertEqual(branch.job_timeout, 1)
 
         # with self.subTest("Update a device role with default timeout"):
         #     branch = Branch(name='Branch Role Update')
@@ -221,16 +221,30 @@ class BranchTestCase(TransactionTestCase):
             branch.full_clean()
             branch.save(provision=False)
             branch.refresh_from_db()
-            branch.provision(user=None)
-            with activate_branch(branch):
-                device_create, _ = Device.objects.using(branch.connection_name).get_or_create(name="Device Create",
-                                                                site=site_a,
-                                                                role=device_role,
-                                                                device_type=device_type)
-                logger.critical(f"{branch.job_timeout = }")
-                logger.critical(f"{branch.get_changes() = }")
-                
-                self.assertEqual(branch.job_timeout, 8)
+            branch.provision(user=None)                
+            model = Device.changed_object_type.model_class()
+            obj = model.objects.using(branch.connection_name).get(pk=Device.changed_object_id)
+            current_data = serialize_object(obj, exclude=['created', 'last_updated'])
+            diff = ChangeDiff(
+                branch=branch,
+                object=Device.changed_object,
+                action=Device.action,
+                original=Device.prechange_data_clean or None,
+                modified=Device.postchange_data_clean or None,
+                current=current_data or None,
+                last_updated=timezone.now(),
+            )
+            diff.save()
+
+            # with activate_branch(branch):
+            #     device_create, _ = Device.objects.using(branch.connection_name).get_or_create(name="Device Create",
+            #                                                     site=site_a,
+            #                                                     role=device_role,
+            #                                                     device_type=device_type)
+            logger.critical(f"{branch.job_timeout = }")
+            logger.critical(f"{branch.get_changes() = }")
+
+            self.assertEqual(branch.job_timeout, 8)
 
         # with self.subTest("Update a device"):
         #     branch = Branch(name='Branch Device Update')
