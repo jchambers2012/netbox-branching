@@ -242,7 +242,8 @@ class BranchTestCase(TransactionTestCase):
                 changed_object=site,
                 object_repr=str(site),
                 postchange_data=postchange_data,
-            )
+                )
+                oc.save()
                 record_change_diff(oc)
             #     device_create, _ = Device.objects.using(branch.connection_name).get_or_create(name="Device Create",
             #                                                     site=site_a,
