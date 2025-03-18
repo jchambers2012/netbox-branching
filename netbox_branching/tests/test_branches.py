@@ -10,7 +10,7 @@ from django.utils import timezone
 from netbox_branching.choices import BranchStatusChoices
 from netbox_branching.constants import MAIN_SCHEMA
 from netbox_branching.models import Branch, ObjectChange
-from netbox_branching.utilities import get_tables_to_replicate
+from netbox_branching.utilities import get_tables_to_replicate, activate_branch
 from netbox_branching.signal_receivers import record_change_diff
 from .utils import fetchall, fetchone
 from dcim.models import Site, Device, DeviceRole, Manufacturer, DeviceType
@@ -239,8 +239,9 @@ class BranchTestCase(TransactionTestCase):
                 object_repr=str(site),
                 postchange_data={'name': site.name, 'slug': site.slug}
             )
-            record_change_diff(oc)
-            # with activate_branch(branch):
+            # record_change_diff(oc)
+            with activate_branch(branch):
+                record_change_diff(oc)
             #     device_create, _ = Device.objects.using(branch.connection_name).get_or_create(name="Device Create",
             #                                                     site=site_a,
             #                                                     role=device_role,
