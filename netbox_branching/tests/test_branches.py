@@ -2,15 +2,19 @@ import re
 from datetime import timedelta
 
 from django.core.exceptions import ValidationError
+from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 
 from netbox_branching.choices import BranchStatusChoices
 from netbox_branching.constants import MAIN_SCHEMA
-from netbox_branching.models import Branch
-from netbox_branching.utilities import get_tables_to_replicate
+from netbox_branching.models import Branch, ObjectChange
+from netbox_branching.utilities import get_tables_to_replicate, activate_branch
+from netbox_branching.signal_receivers import record_change_diff
 from .utils import fetchall, fetchone
+from dcim.models import Site, Device, DeviceRole, Manufacturer, DeviceType
+from core.choices import ObjectChangeActionChoices
 
 
 class BranchTestCase(TransactionTestCase):
@@ -83,6 +87,7 @@ class BranchTestCase(TransactionTestCase):
     @override_settings(PLUGINS_CONFIG={
         'netbox_branching': {
             'max_working_branches': 2,
+            'job_timeout': 300,
         }
     })
     def test_max_working_branches(self):
@@ -107,6 +112,7 @@ class BranchTestCase(TransactionTestCase):
     @override_settings(PLUGINS_CONFIG={
         'netbox_branching': {
             'max_branches': 2,
+            'job_timeout': 300,
         }
     })
     def test_max_branches(self):
@@ -142,3 +148,136 @@ class BranchTestCase(TransactionTestCase):
         branch.last_sync = timezone.now() - timedelta(days=11)
         branch.save()
         self.assertTrue(branch.is_stale)
+
+    @override_settings(PLUGINS_CONFIG={
+        'netbox_branching': {
+            'max_branches': 32,
+            'job_timeout': 0,
+            'job_timeout_modifier': {
+                "default_create": 1,  # seconds
+                "default_update": 2,  # seconds
+                "default_delete": 4,  # seconds
+                "dcim.device": {
+                    "create": 8,  # seconds
+                    "update": 16,  # seconds
+                    "delete": 32,  # seconds
+                }
+            },
+        }
+    })
+    def test_branch_timeout(self):
+
+        user = get_user_model().objects.create_user(username='testuser', is_superuser=True)
+        site_a, _ = Site.objects.get_or_create(name="Site A",
+                                               slug="site_a",
+                                               description="site_a_description")
+        device_manufacturer, _ = Manufacturer.objects.get_or_create(name="Device Manufacturer",
+                                                                    slug="device_manufacturer")
+        device_role, _ = DeviceRole.objects.get_or_create(name="Device Role",
+                                                          slug="device_role")
+        device_role_existing, _ = DeviceRole.objects.get_or_create(name="Device Role Existing",
+                                                                   slug="device_role_existing")
+        device_type, _ = DeviceType.objects.get_or_create(manufacturer=device_manufacturer,
+                                                          model="Device Model",
+                                                          slug="device_model")
+        device_existing, _ = Device.objects.get_or_create(name="Device Existing",
+                                                          site=site_a,
+                                                          role=device_role,
+                                                          device_type=device_type)
+        import logging
+        logger = logging.getLogger(__name__)
+        # with self.subTest("Create a device role with default timeout"):
+        #     branch = Branch(name='Branch Device Role Create')
+        #     branch.full_clean()
+        #     branch.save(provision=False)
+        #     branch.refresh_from_db()
+        #     branch.provision(user=None)
+        #     with activate_branch(branch):
+        #         device_role_create, _ = DeviceRole.objects.using(branch.connection_name).get_or_create(
+        #                                                                 name="Device Role Create",
+        #                                                                 slug="device_role_create")
+        #     logger.critical(f"{branch.job_timeout = }")
+        #     logger.critical(f"{branch.get_changes() = }")
+        #     self.assertEqual(branch.job_timeout, 1)
+
+        # with self.subTest("Update a device role with default timeout"):
+        #     branch = Branch(name='Branch Role Update')
+        #     branch.full_clean()
+        #     branch.save(provision=False)
+        #     branch.refresh_from_db()
+        #     branch.provision(user=None)
+        #     with activate_branch(branch):
+        #         device_role_existing.name = "Device Role Update"
+        #         device_role_existing.save()
+        #     self.assertEqual(branch.job_timeout, 2)
+
+        # with self.subTest("Delete a device role with default timeout"):
+        #     branch = Branch(name='Branch Role Delete')
+        #     branch.full_clean()
+        #     branch.save(provision=False)
+        #     branch.refresh_from_db()
+        #     branch.provision(user=None)
+        #     with activate_branch(branch):
+        #         device_role_existing.delete()
+        #     self.assertEqual(branch.job_timeout, 4)
+
+        with self.subTest("Create a device"):
+            branch = Branch(name='Branch Device Create')
+            branch.full_clean()
+            branch.save(provision=False)
+            branch.refresh_from_db()
+            branch.provision(user=None)
+
+            # record_change_diff(oc)
+            with activate_branch(branch):
+                site = Site.objects.using(branch.connection_name).create(name="Site Create",
+                                       slug="site_create",
+                                       description="site_create_description")
+                postchange_data = {'name': site.name, 'slug': site.slug}
+                oc = ObjectChange.objects.using(branch.connection_name).create(
+                user=user,
+                user_name=user.username,
+                request_id="dbe36856-f278-48b0-82a6-1eeef652e2b6",
+                action=ObjectChangeActionChoices.ACTION_CREATE,
+                changed_object=site,
+                object_repr=str(site),
+                postchange_data=postchange_data,
+                )
+                oc.save()
+                record_change_diff(oc)
+            #     device_create, _ = Device.objects.using(branch.connection_name).get_or_create(name="Device Create",
+            #                                                     site=site_a,
+            #                                                     role=device_role,
+            #                                                     device_type=device_type)
+                logger.critical(f"{branch.job_timeout = }")
+                logger.critical(f"{branch.get_changes() = }")
+                logger.critical(f"{len(branch.get_changes()) = }")
+                logger.critical(f"{oc = }")
+                logger.critical(f"{oc.__dict__ = }")
+                logger.critical(f"{branch.__dict__ = }")
+            logger.critical(f"{branch.job_timeout = }")
+            logger.critical(f"{branch.get_changes() = }")
+            logger.critical(f"{len(branch.get_changes()) = }")
+
+            self.assertEqual(branch.job_timeout, 8)
+
+        # with self.subTest("Update a device"):
+        #     branch = Branch(name='Branch Device Update')
+        #     branch.full_clean()
+        #     branch.save(provision=False)
+        #     branch.refresh_from_db()
+        #     branch.provision(user=None)
+        #     with activate_branch(branch):
+        #         device_existing.name = "Device Update"
+        #         device_existing.save()
+        #     self.assertEqual(branch.job_timeout, 16)
+
+        # with self.subTest("Delete a device"):
+        #     branch = Branch(name='Branch Device Delete')
+        #     branch.full_clean()
+        #     branch.save(provision=False)
+        #     branch.refresh_from_db()
+        #     branch.provision(user=None)
+        #     with activate_branch(branch):
+        #         device_existing.delete()
+        #     self.assertEqual(branch.job_timeout, 32)
